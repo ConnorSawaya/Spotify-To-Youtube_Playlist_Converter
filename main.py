@@ -1,145 +1,76 @@
 import streamlit as st
-import os
-from spotify_scraper import SpotifyClient
-from googleapiclient.discovery import build
-from serpapi import GoogleSearch
 import pandas as pd
-from dotenv import load_dotenv
+import os
+import time
+from dotenv import load_dotenv # Make sure to pip install python-dotenv
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+from googleapiclient.discovery import build
 
-query = ""
+# --- FORCE LOAD VARIABLES ---
+# This looks for the .env file in your folder and loads it into memory
+load_dotenv(override=True)
 
+SP_ID = os.getenv("SPOTIPY_CLIENT_ID")
+SP_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
 
-# Api Setup using ENV variables so u losers cant steal my keys!! 
-load_dotenv()
-serpapi_api_key = os.getenv("SERPAPI_API_KEY")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 
+st.title("🎵 Playlist Porter")
 
-
-
-st.set_page_config(page_title="Spotify -> YouTube Converter", page_icon ="🎵")
-
-st.title("Spotify To YouTube Porter")
-st.markdown("Convert Your Spotify Playlists to YouTube Playlists Quickly And Easily")
-
-
-
-# Checks Content from the playlist and returns it with all the info needed for Searching it on YT
-
-def get_spotify_tracks(playlist_url):
-    client = SpotifyClient() # Instance of spotify client to fetch data
-    try:
-        playlist = client.get_playlist_info(playlist_url)
-        track_list = []
-        
-        # Ensure tracks exists and is a list
-        tracks = playlist.get("tracks", [])
-        
-        for track in tracks:
-            name = track.get("name", "Unknown Title")
-            # Defensive check for artist list
-            artists = track.get("artist", [])
-            artist_name = artists[0].get('name', '') if artists else ''
-            track_list.append(f"{name} {artist_name}".strip())
-            
-        return track_list, playlist.get("name", "Unnamed Playlist") 
-        
-    except Exception as e:
-        st.error(f"Spotify Error: {e}") 
-        return [], None
-    
-
-
-
-
-    
-def get_youtube_link(query, serpapi_api_key): # We pass the query and api key as perams 
-    # We define the params inside the function so they are fresh for every song
-    if not serpapi_api_key:
-        return "Error: SerpApi Not Found"
-    params = {
-        "engine": "youtube",
-        "search_query": query, # Removed the 'youtube' prefix here
-        "api_key": serpapi_api_key
-    }
-    try:
-        search = GoogleSearch(params)
-        results = search.get_dict()
-        if "error" in results:
-            return f"SerpApi Error: {results['error']}"
-        
-        # Check if video_results exists in the response
-        if "video_results" in results and len(results["video_results"]) > 0:
-            # Grab the link from the first result
-            return results["video_results"][0].get("link")
-            
-    except Exception as e:
-        return f"Error: {e}"
-    return "Not Found 🥲"
-  
-
-# Main Ui and StreamLit Setup!
-
-spotify_url = st.text_input("🔗 Paste Spotify Playlist URL", placeholder="https://open.spotify.com/playlist/...")
-
-if st.button("Convert"): # Streamlit Button For Converrting it and tieing it all together
-    
-
-    if not spotify_url: # Spotify URL Check
-        st.warning("Please enter a Spotify playlist URL!") 
+# --- DEBUG STATUS ---
+with st.sidebar:
+    st.header("System Status")
+    if SP_ID and SP_SECRET:
+        st.success("✅ Spotify Keys Loaded")
     else:
-        status = st.status("Processing...")
-        with status:
-            # Fetching From Spotfy
-            st.write("Fetching Tracks From Spotify...")
-            tracks, p_name = get_spotify_tracks(spotify_url)
-
-            if tracks:
-                st.success("Found Tracks")
-                st.write(f"Found {len(tracks)} tracks in playlist: {p_name}")
-
-                # Fetching Data From Youtube
-                results = []
-                progress_bar = st.progress(0)
-                for i, track in enumerate(tracks):
-                    st.write(f"Searching Youtube For: {track}")
-                    url = get_youtube_link(track, serpapi_api_key)
-
-                    results.append({"Song": track, "Youtube Link": url})
-                    progress_bar.progress((i + 1) / len(tracks))
-                status.update(label="Conversion Done!", state="complete", expanded=False)
-
-                # Show THE RESULTS 🥳🥳🥳
-                st.subheader(f"Results For: {p_name}")
-                df = pd.DataFrame(results)
-
-                # Show it as a Table
-                # Show it as a Table with clickable links
-                st.dataframe(
-                    df, 
-                    use_container_width=True,
-                    column_config={
-                        "Youtube Link": st.column_config.LinkColumn("Youtube Link")
-                    }
-                )
-                                
-                # Downloadable Button
-                csv = df.to_csv(index=False).encode("utf-8") # Converts DataFrame to CSV and encodes
-                st.download_button(
-                    label="Download As CSV",
-                    data = csv,
-                    file_name=f"{p_name}_spotify_to_youtube.csv", # Sets the defult nameing convention for the downloaded file
-                    mime="text/csv", # Tells the browser its a CSV file
-                )
-            else:
-                st.error("Couldn't fetch tracks. Please Check Your Spotify Playlist URl and make sure it's public!")
-with st._bottom:
-    st.divider()
-    st.caption("Made By Connor | [https://github.com/ConnorSawaya](https://github.com/ConnorSawaya)")
-
+        st.error("❌ Keys Still Not Found")
+        st.info("Check that your .env file is in the same folder as main.py")
     
-                    
+    yt_api_key = st.text_input("YouTube API Key", type="password")
 
+# --- LOGIC ---
+def get_spotify_tracks(playlist_url):
+    try:
+        auth_manager = SpotifyClientCredentials(client_id=SP_ID, client_secret=SP_SECRET)
+        sp = spotipy.Spotify(auth_manager=auth_manager)
+        playlist_id = playlist_url.split("playlist/")[1].split("?")[0]
+        results = sp.playlist_items(playlist_id)
+        return [f"{i['track']['name']} {i['track']['artists'][0]['name']}" for i in results['items'] if i['track']]
+    except Exception as e:
+        return None, str(e)
 
-            
+def get_youtube_link(query, api_key):
+    try:
+        youtube = build("youtube", "v3", developerKey=api_key)
+        request = youtube.search().list(q=query, part="snippet", maxResults=1, type="video")
+        response = request.execute()
+        v_id = response["items"][0]["id"]["videoId"]
+        return f"https://www.youtube.com/watch?v={v_id}"
+    except:
+        return "Search Failed"
 
+# --- UI ---
+url = st.text_input("🔗 Spotify Playlist URL")
 
+if st.button("Convert", use_container_width=True):
+    if not yt_api_key or not url:
+        st.warning("Provide both the YT Key and the Spotify URL.")
+    elif not SP_ID:
+        st.error("Spotify credentials missing from .env!")
+    else:
+        with st.status("Converting...") as status:
+            tracks = get_spotify_tracks(url)
+            if tracks:
+                results = []
+                table_placeholder = st.empty()
+                for i, track in enumerate(tracks):
+                    link = get_youtube_link(track, yt_api_key)
+                    results.append({"Track": track, "Link": link})
+                    table_placeholder.dataframe(pd.DataFrame(results), column_config={"Link": st.column_config.LinkColumn()})
+                status.update(label="Complete!", state="complete")
+                
+                # Export as text
+                output = "\n".join([f"{r['Track']}: {r['Link']}" for r in results])
+                st.download_button("Download Links", output, file_name="playlist.txt")
