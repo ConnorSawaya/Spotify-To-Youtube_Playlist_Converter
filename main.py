@@ -1,76 +1,105 @@
 import streamlit as st
 import pandas as pd
 import os
-import time
-from dotenv import load_dotenv # Make sure to pip install python-dotenv
+from dotenv import load_dotenv
 import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+from spotipy.oauth2 import SpotifyOAuth
 from googleapiclient.discovery import build
 
-# --- FORCE LOAD VARIABLES ---
-# This looks for the .env file in your folder and loads it into memory
+# --- INITIAL SETUP ---
 load_dotenv(override=True)
-
 SP_ID = os.getenv("SPOTIPY_CLIENT_ID")
 SP_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
+YT_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# --- PAGE CONFIG ---
 st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
-
 st.title("🎵 Playlist Porter")
 
-# --- DEBUG STATUS ---
-with st.sidebar:
-    st.header("System Status")
-    if SP_ID and SP_SECRET:
-        st.success("✅ Spotify Keys Loaded")
-    else:
-        st.error("❌ Keys Still Not Found")
-        st.info("Check that your .env file is in the same folder as main.py")
-    
-    yt_api_key = st.text_input("YouTube API Key", type="password")
+# Must match your Spotify Dashboard exactly!
+REDIRECT_URI = "http://127.0.0.1:8501/"
 
-# --- LOGIC ---
-def get_spotify_tracks(playlist_url):
+# --- AUTHENTICATION LOGIC ---
+sp_oauth = SpotifyOAuth(
+    client_id=SP_ID,
+    client_secret=SP_SECRET,
+    redirect_uri=REDIRECT_URI,
+    scope="playlist-read-private",
+    show_dialog=True,
+    cache_path=".cache"
+)
+
+# 1. Check if we are returning from Spotify with a login code
+if "code" in st.query_params:
     try:
-        auth_manager = SpotifyClientCredentials(client_id=SP_ID, client_secret=SP_SECRET)
-        sp = spotipy.Spotify(auth_manager=auth_manager)
-        playlist_id = playlist_url.split("playlist/")[1].split("?")[0]
-        results = sp.playlist_items(playlist_id)
-        return [f"{i['track']['name']} {i['track']['artists'][0]['name']}" for i in results['items'] if i['track']]
+        # Trade the URL code for a real Access Token
+        sp_oauth.get_access_token(st.query_params["code"])
+        # Clear the URL so we don't loop
+        st.query_params.clear()
+        st.rerun()
     except Exception as e:
-        return None, str(e)
+        st.error(f"Login swap failed: {e}")
 
-def get_youtube_link(query, api_key):
-    try:
-        youtube = build("youtube", "v3", developerKey=api_key)
-        request = youtube.search().list(q=query, part="snippet", maxResults=1, type="video")
-        response = request.execute()
-        v_id = response["items"][0]["id"]["videoId"]
-        return f"https://www.youtube.com/watch?v={v_id}"
-    except:
-        return "Search Failed"
+# 2. Check if we have a valid token in our cache
+token_info = sp_oauth.validate_token(sp_oauth.cache_handler.get_cached_token())
 
-# --- UI ---
-url = st.text_input("🔗 Spotify Playlist URL")
+if not token_info:
+    # If no token, show the login button and STOP the rest of the app
+    auth_url = sp_oauth.get_authorize_url()
+    st.info("👋 Welcome! Please link your Spotify account to begin.")
+    st.link_button("🔑 Login with Spotify", auth_url)
+    st.stop()
 
-if st.button("Convert", use_container_width=True):
-    if not yt_api_key or not url:
-        st.warning("Provide both the YT Key and the Spotify URL.")
-    elif not SP_ID:
-        st.error("Spotify credentials missing from .env!")
+# 3. If we are here, we are successfully logged in
+sp = spotipy.Spotify(auth=token_info['access_token'])
+
+with st.sidebar:
+    st.success("✅ Spotify Connected")
+    if st.button("Logout & Reset"):
+        if os.path.exists(".cache"):
+            os.remove(".cache")
+        st.rerun()
+
+# --- APP LOGIC ---
+url = st.text_input("🔗 Paste Spotify Playlist URL", placeholder="https://open.spotify.com/playlist/...")
+
+if st.button("Convert to YouTube", use_container_width=True):
+    if not url:
+        st.warning("Please enter a URL first.")
+    elif not YT_KEY:
+        st.error("YouTube API Key missing from environment!")
     else:
-        with st.status("Converting...") as status:
-            tracks = get_spotify_tracks(url)
-            if tracks:
-                results = []
-                table_placeholder = st.empty()
-                for i, track in enumerate(tracks):
-                    link = get_youtube_link(track, yt_api_key)
-                    results.append({"Track": track, "Link": link})
-                    table_placeholder.dataframe(pd.DataFrame(results), column_config={"Link": st.column_config.LinkColumn()})
-                status.update(label="Complete!", state="complete")
+        with st.status("Converting Playlist...") as status:
+            try:
+                # Extract Playlist ID
+                playlist_id = url.split("playlist/")[1].split("?")[0]
+                results = sp.playlist_items(playlist_id)
+                tracks = [f"{i['track']['name']} {i['track']['artists'][0]['name']}" for i in results['items'] if i['track']]
                 
-                # Export as text
-                output = "\n".join([f"{r['Track']}: {r['Link']}" for r in results])
-                st.download_button("Download Links", output, file_name="playlist.txt")
+                final_results = []
+                table_placeholder = st.empty()
+                
+                # YouTube Search
+                youtube = build("youtube", "v3", developerKey=YT_KEY)
+                
+                for track in tracks:
+                    search_query = youtube.search().list(q=track, part="snippet", maxResults=1, type="video")
+                    resp = search_query.execute()
+                    
+                    if resp["items"]:
+                        v_id = resp["items"][0]["id"]["videoId"]
+                        link = f"https://www.youtube.com/watch?v={v_id}"
+                    else:
+                        link = "No video found"
+                    
+                    final_results.append({"Track": track, "YouTube Link": link})
+                    # Update the UI live as it finds songs
+                    table_placeholder.dataframe(pd.DataFrame(final_results), use_container_width=True, hide_index=True)
+                
+                status.update(label="Done!", state="complete")
+                
+                # Export Button
+                txt_data = "\n".join([f"{r['Track']}: {r['YouTube Link']}" for r in final_results])
+                st.download_button("📩 Download Playlist as TXT", txt_data, file_name="my_playlist.txt")
+                
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
