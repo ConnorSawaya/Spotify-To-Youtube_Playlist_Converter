@@ -3,4 +3,4 @@ pandas
 google-api-python-client
 google-search-results
 python-dotenv
-spotify-scraper
+
