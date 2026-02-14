@@ -1,5 +1,5 @@
 streamlit
 pandas
 google-api-python-client
-spotipy
-python-dotenv
+beautifulsoup4
+requests
