@@ -17,7 +17,7 @@ st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 st.title("🎵 Playlist Porter")
 
 # Must match your Spotify Dashboard exactly!
-REDIRECT_URI = "http://127.0.0.1:8501/"
+REDIRECT_URI = "https://spotify-to-youtubeplaylistconverter-production.up.railway.app/"
 
 # --- AUTHENTICATION LOGIC ---
 sp_oauth = SpotifyOAuth( # perms
@@ -104,4 +104,5 @@ if st.button("Convert to YouTube", use_container_width=True):
                 
             except Exception as e:
                 st.error(f"An error occurred: {e}") # if a error happened it says why
+
 
