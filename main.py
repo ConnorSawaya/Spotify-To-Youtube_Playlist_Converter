@@ -10,13 +10,11 @@ from googleapiclient.discovery import build
 if os.path.exists(".env"):
     load_dotenv(override=True)
 
-SP_ID = os.getenv("SPOTIPY_CLIENT_ID")
-SP_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
-YT_KEY = os.getenv("YOUTUBE_API_KEY")
-
-# CRITICAL: This must match your Spotify Dashboard EXACTLY
-# Railway will use the Variable you set; Local will use the default.
-REDIRECT_URI = os.getenv("REDIRECT_URI", "http://127.0.0.1:8501/")
+# .strip() handles any accidental spaces in Railway dashboard
+SP_ID = os.getenv("SPOTIPY_CLIENT_ID", "").strip()
+SP_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "").strip()
+YT_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
+REDIRECT_URI = os.getenv("REDIRECT_URI", "http://127.0.0.1:8501/").strip()
 
 st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 st.title("🎵 Playlist Porter")
@@ -31,18 +29,17 @@ sp_oauth = SpotifyOAuth(
     cache_path=".cache"
 )
 
-# 1. Handle the redirect back from Spotify
-# We check query_params for 'code'
-q_params = st.query_params
-if "code" in q_params:
+# 1. Catch the 'code' parameter after Spotify redirects back
+params = st.query_params
+if "code" in params:
     try:
-        sp_oauth.get_access_token(q_params["code"])
-        st.query_params.clear() # Clear the URL
+        sp_oauth.get_access_token(params["code"])
+        st.query_params.clear()
         st.rerun()
     except Exception as e:
-        st.error(f"Authentication Failed: {e}")
+        st.error(f"Auth Error: {e}")
 
-# 2. Validate session
+# 2. Check for existing token
 token_info = sp_oauth.validate_token(sp_oauth.cache_handler.get_cached_token())
 
 if not token_info:
@@ -51,7 +48,7 @@ if not token_info:
     st.link_button("🔑 Login with Spotify", auth_url)
     st.stop()
 
-# 3. Success! Initialize Client
+# 3. Successful session
 sp = spotipy.Spotify(auth=token_info['access_token'])
 
 with st.sidebar:
@@ -70,11 +67,11 @@ if st.button("Convert to YouTube", use_container_width=True):
     elif not YT_KEY:
         st.error("YouTube API Key missing in Railway Variables!")
     else:
-        with st.status("Fetching tracks...", expanded=True) as status:
+        with st.status("Converting...", expanded=True) as status:
             try:
-                # Extract ID
+                # Extract Playlist ID
                 if "playlist/" not in url:
-                    st.error("Invalid link format.")
+                    st.error("Invalid URL format.")
                     st.stop()
                 
                 playlist_id = url.split("playlist/")[1].split("?")[0]
@@ -82,32 +79,21 @@ if st.button("Convert to YouTube", use_container_width=True):
                 tracks = [f"{i['track']['name']} {i['track']['artists'][0]['name']}" 
                           for i in results['items'] if i['track']]
                 
-                if not tracks:
-                    st.warning("This playlist seems empty.")
-                    st.stop()
-
                 final_results = []
                 table_placeholder = st.empty()
-                
                 youtube = build("youtube", "v3", developerKey=YT_KEY)
                 
                 for track in tracks:
                     status.update(label=f"Searching: {track}")
-                    search = youtube.search().list(q=track, part="snippet", maxResults=1, type="video").execute()
+                    resp = youtube.search().list(q=track, part="snippet", maxResults=1, type="video").execute()
                     
-                    if search.get("items"):
-                        v_id = search["items"][0]["id"]["videoId"]
-                        link = f"https://www.youtube.com/watch?v={v_id}"
-                    else:
-                        link = "Not found"
-                    
+                    link = f"https://www.youtube.com/watch?v={resp['items'][0]['id']['videoId']}" if resp["items"] else "Not found"
                     final_results.append({"Track": track, "YouTube Link": link})
                     table_placeholder.dataframe(pd.DataFrame(final_results), use_container_width=True, hide_index=True)
                 
-                status.update(label="Complete!", state="complete")
-                
+                status.update(label="Conversion Complete!", state="complete")
                 txt_data = "\n".join([f"{r['Track']}: {r['YouTube Link']}" for r in final_results])
-                st.download_button("📂 Download TXT", txt_data, file_name="playlist.txt")
+                st.download_button("📂 Download Playlist (.txt)", txt_data, file_name="my_playlist.txt")
                 
             except Exception as e:
                 st.error(f"Error: {e}")
