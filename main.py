@@ -52,7 +52,7 @@ token_info = sp_oauth.validate_token(st.session_state.cache_handler.get_cached_t
 
 if not token_info:
     auth_url = sp_oauth.get_authorize_url()
-    st.info("👋 Welcome! Please link your Spotify account to begin.")
+    st.info("Please link your Spotify account to begin.")
     st.link_button("🔑 Login with Spotify", auth_url)
     st.stop()
 
@@ -105,3 +105,4 @@ if st.button("Convert to YouTube", use_container_width=True):
                 
             except Exception as e:
                 st.error(f"Error: {e}")
+
