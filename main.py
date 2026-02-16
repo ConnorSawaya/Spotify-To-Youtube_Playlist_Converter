@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+from spotipy.cache_handler import MemoryCacheHandler
 from googleapiclient.discovery import build
 
 # --- INITIAL SETUP ---
@@ -20,27 +21,34 @@ st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 st.title("🎵 Playlist Porter")
 
 # --- AUTHENTICATION LOGIC ---
+# Using MemoryCacheHandler prevents Railway from failing due to file-writing issues
+if 'cache_handler' not in st.session_state:
+    st.session_state.cache_handler = MemoryCacheHandler()
+
 sp_oauth = SpotifyOAuth(
     client_id=SP_ID,
     client_secret=SP_SECRET,
     redirect_uri=REDIRECT_URI,
     scope="playlist-read-private",
     show_dialog=True,
-    cache_path=".cache"
+    cache_handler=st.session_state.cache_handler
 )
 
 # 1. Catch the 'code' parameter after Spotify redirects back
-params = st.query_params
-if "code" in params:
+if "code" in st.query_params:
     try:
-        sp_oauth.get_access_token(params["code"])
+        # Exchange the code for a token and save to memory cache
+        st.session_state.cache_handler.save_token_to_cache(
+            sp_oauth.get_access_token(st.query_params["code"])
+        )
+        # Clear the URL parameters and refresh the app
         st.query_params.clear()
         st.rerun()
     except Exception as e:
         st.error(f"Auth Error: {e}")
 
-# 2. Check for existing token
-token_info = sp_oauth.validate_token(sp_oauth.cache_handler.get_cached_token())
+# 2. Check for existing token in memory
+token_info = sp_oauth.validate_token(st.session_state.cache_handler.get_cached_token())
 
 if not token_info:
     auth_url = sp_oauth.get_authorize_url()
@@ -54,8 +62,8 @@ sp = spotipy.Spotify(auth=token_info['access_token'])
 with st.sidebar:
     st.success("✅ Spotify Connected")
     if st.button("Logout & Reset"):
-        if os.path.exists(".cache"):
-            os.remove(".cache")
+        # Reset memory cache and rerun
+        st.session_state.cache_handler = MemoryCacheHandler()
         st.rerun()
 
 # --- APP LOGIC ---
