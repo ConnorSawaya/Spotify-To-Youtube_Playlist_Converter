@@ -7,7 +7,7 @@ from spotipy.oauth2 import SpotifyOAuth
 from spotipy.cache_handler import MemoryCacheHandler
 from googleapiclient.discovery import build
 
-# --- INITIAL SETUP ---
+# --- INITIAL SETUP For env---
 if os.path.exists(".env"):
     load_dotenv(override=True)
 
@@ -21,11 +21,11 @@ st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 st.title("🎵 Playlist Porter")
 
 # --- AUTHENTICATION LOGIC ---
-# Using MemoryCacheHandler prevents Railway from failing due to file-writing issues
+# Using MemoryCacheHandler prevents Railway from being annoying and not working
 if 'cache_handler' not in st.session_state:
     st.session_state.cache_handler = MemoryCacheHandler()
-
-sp_oauth = SpotifyOAuth(
+# Spotify Auth
+sp_oauth = SpotifyOAuth( 
     client_id=SP_ID,
     client_secret=SP_SECRET,
     redirect_uri=REDIRECT_URI,
@@ -47,7 +47,7 @@ if "code" in st.query_params:
     except Exception as e:
         st.error(f"Auth Error: {e}")
 
-# 2. Check for existing token in memory
+# 2. Checks for token in memory
 token_info = sp_oauth.validate_token(st.session_state.cache_handler.get_cached_token())
 
 if not token_info:
@@ -60,7 +60,12 @@ if not token_info:
 sp = spotipy.Spotify(auth=token_info['access_token'])
 
 with st.sidebar:
-    st.success("✅ Spotify Connected")
+    try: #
+        user_info = sp.current_user() #
+        st.success(f"Connected as {user_info['display_name']}") #
+    except: #
+        st.success("Spotify Connected")
+    
     if st.button("Logout & Reset"):
         # Reset memory cache and rerun
         st.session_state.cache_handler = MemoryCacheHandler()
@@ -71,13 +76,13 @@ url = st.text_input("🔗 Paste Spotify Playlist URL", placeholder="https://open
 
 if st.button("Convert to YouTube", use_container_width=True):
     if not url:
-        st.warning("Please enter a URL first.")
+        st.warning("Please enter a URL first.") # if url is empty
     elif not YT_KEY:
-        st.error("YouTube API Key missing in Railway Variables!")
+        st.error("YouTube API Key missing in Railway Variables!")  # if the key si not setup
     else:
         with st.status("Converting...", expanded=True) as status:
             try:
-                # Extract Playlist ID
+                # gets playlist id
                 if "playlist/" not in url:
                     st.error("Invalid URL format.")
                     st.stop()
@@ -105,4 +110,3 @@ if st.button("Convert to YouTube", use_container_width=True):
                 
             except Exception as e:
                 st.error(f"Error: {e}")
-
