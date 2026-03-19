@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 from dotenv import load_dotenv
-import requests
+import spotipy
+from spotipy.oauth2 import SpotifyOAuth
+from spotipy.cache_handler import MemoryCacheHandler
 from googleapiclient.discovery import build
 
 # --- INITIAL SETUP For env---
@@ -13,30 +15,70 @@ if os.path.exists(".env"):
 SP_ID = os.getenv("SPOTIPY_CLIENT_ID", "").strip()
 SP_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "").strip()
 YT_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
+REDIRECT_URI = os.getenv("REDIRECT_URI", "http://127.0.0.1:8501/").strip()
 
 st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 st.title("🎵 Playlist Porter")
 
 # --- AUTHENTICATION LOGIC ---
-def get_spotify_token():
-    r = requests.post("https://accounts.spotify.com/api/token",
-        data={"grant_type": "client_credentials"},
-        auth=(SP_ID, SP_SECRET))
-    return r.json().get("access_token")
+# Using MemoryCacheHandler prevents Railway from being annoying and not working
+if 'cache_handler' not in st.session_state:
+    st.session_state.cache_handler = MemoryCacheHandler()
+# Spotify Auth
+sp_oauth = SpotifyOAuth( 
+    client_id=SP_ID,
+    client_secret=SP_SECRET,
+    redirect_uri=REDIRECT_URI,
+    scope="playlist-read-private",
+    show_dialog=True,
+    cache_handler=st.session_state.cache_handler
+)
 
-def get_playlist_tracks(token, playlist_id):
-    headers = {"Authorization": f"Bearer {token}"}
-    r = requests.get(f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50", headers=headers)
-    return r.json()
+# 1. Catch the 'code' parameter after Spotify redirects back
+if "code" in st.query_params:
+    try:
+        # Exchange the code for a token and save to memory cache
+        st.session_state.cache_handler.save_token_to_cache(
+            sp_oauth.get_access_token(st.query_params["code"])
+        )
+        # Clear the URL parameters and refresh the app
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"Auth Error: {e}")
+
+# 2. Checks for token in memory
+token_info = sp_oauth.validate_token(st.session_state.cache_handler.get_cached_token())
+
+if not token_info:
+    auth_url = sp_oauth.get_authorize_url()
+    st.info("Please link your Spotify account to begin.")
+    st.link_button("🔑 Login with Spotify", auth_url)
+    st.stop()
+
+# 3. Successful session
+sp = spotipy.Spotify(auth=token_info['access_token'])
+
+with st.sidebar:
+    try:
+        user_info = sp.current_user()
+        st.success(f"Connected as {user_info['display_name']}")
+    except:
+        st.success("Spotify Connected")
+    
+    if st.button("Logout & Reset"):
+        # Reset memory cache and rerun
+        st.session_state.cache_handler = MemoryCacheHandler()
+        st.rerun()
 
 # --- APP LOGIC ---
 url = st.text_input("🔗 Paste Spotify Playlist URL", placeholder="https://open.spotify.com/playlist/...")
 
 if st.button("Convert to YouTube", use_container_width=True):
     if not url:
-        st.warning("Please enter a URL first.") # if url is empty
+        st.warning("Please enter a URL first.")
     elif not YT_KEY:
-        st.error("YouTube API Key missing in Railway Variables!")  # if the key si not setup
+        st.error("YouTube API Key missing in Railway Variables!")
     else:
         with st.status("Converting...", expanded=True) as status:
             try:
@@ -46,13 +88,9 @@ if st.button("Convert to YouTube", use_container_width=True):
                     st.stop()
                 
                 playlist_id = url.split("playlist/")[1].split("?")[0]
-                token = get_spotify_token()
-                data = get_playlist_tracks(token, playlist_id)
-                if "error" in data:
-                    st.error(f"Spotify error: {data['error']['message']}")
-                    st.stop()
+                results = sp.playlist_items(playlist_id)
                 tracks = [f"{i['track']['name']} {i['track']['artists'][0]['name']}" 
-                          for i in data['items'] if i['track']]
+                          for i in results['items'] if i['track']]
                 
                 final_results = []
                 table_placeholder = st.empty()
