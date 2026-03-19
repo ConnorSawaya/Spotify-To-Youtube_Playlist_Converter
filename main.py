@@ -3,8 +3,7 @@ import pandas as pd
 import os
 from dotenv import load_dotenv
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
-from spotipy.cache_handler import MemoryCacheHandler
+from spotipy.oauth2 import SpotifyClientCredentials
 from googleapiclient.discovery import build
 
 # --- INITIAL SETUP For env---
@@ -15,61 +14,12 @@ if os.path.exists(".env"):
 SP_ID = os.getenv("SPOTIPY_CLIENT_ID", "").strip()
 SP_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "").strip()
 YT_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
-REDIRECT_URI = os.getenv("REDIRECT_URI", "http://127.0.0.1:8501/").strip()
 
 st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 st.title("🎵 Playlist Porter")
 
 # --- AUTHENTICATION LOGIC ---
-# Using MemoryCacheHandler prevents Railway from being annoying and not working
-if 'cache_handler' not in st.session_state:
-    st.session_state.cache_handler = MemoryCacheHandler()
-# Spotify Auth
-sp_oauth = SpotifyOAuth( 
-    client_id=SP_ID,
-    client_secret=SP_SECRET,
-    redirect_uri=REDIRECT_URI,
-    scope="playlist-read-private",
-    show_dialog=True,
-    cache_handler=st.session_state.cache_handler
-)
-
-# 1. Catch the 'code' parameter after Spotify redirects back
-if "code" in st.query_params:
-    try:
-        # Exchange the code for a token and save to memory cache
-        st.session_state.cache_handler.save_token_to_cache(
-            sp_oauth.get_access_token(st.query_params["code"])
-        )
-        # Clear the URL parameters and refresh the app
-        st.query_params.clear()
-        st.rerun()
-    except Exception as e:
-        st.error(f"Auth Error: {e}")
-
-# 2. Checks for token in memory
-token_info = sp_oauth.validate_token(st.session_state.cache_handler.get_cached_token())
-
-if not token_info:
-    auth_url = sp_oauth.get_authorize_url()
-    st.info("Please link your Spotify account to begin.")
-    st.link_button("🔑 Login with Spotify", auth_url)
-    st.stop()
-
-# 3. Successful session
-sp = spotipy.Spotify(auth=token_info['access_token'])
-
-with st.sidebar:
-    try: #
-        user_info = sp.current_user() #
-        st.success(f"Connected as {user_info['display_name']}") #
-    except: #
-        st.success("Spotify Connected")
-    
-    if st.button("Logout & Reset"):
-        # Reset memory cache and rerun
-        st.session_state.cache_handler = MemoryCacheHandler()
-        st.rerun()
+sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SP_ID, client_secret=SP_SECRET))
 
 # --- APP LOGIC ---
 url = st.text_input("🔗 Paste Spotify Playlist URL", placeholder="https://open.spotify.com/playlist/...")
