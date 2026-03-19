@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from dotenv import load_dotenv
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+import requests
 from googleapiclient.discovery import build
 
 # --- INITIAL SETUP For env---
@@ -19,7 +18,16 @@ st.set_page_config(page_title="Playlist Porter", page_icon="🎵")
 st.title("🎵 Playlist Porter")
 
 # --- AUTHENTICATION LOGIC ---
-sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=SP_ID, client_secret=SP_SECRET))
+def get_spotify_token():
+    r = requests.post("https://accounts.spotify.com/api/token",
+        data={"grant_type": "client_credentials"},
+        auth=(SP_ID, SP_SECRET))
+    return r.json().get("access_token")
+
+def get_playlist_tracks(token, playlist_id):
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50", headers=headers)
+    return r.json()
 
 # --- APP LOGIC ---
 url = st.text_input("🔗 Paste Spotify Playlist URL", placeholder="https://open.spotify.com/playlist/...")
@@ -38,9 +46,13 @@ if st.button("Convert to YouTube", use_container_width=True):
                     st.stop()
                 
                 playlist_id = url.split("playlist/")[1].split("?")[0]
-                results = sp.playlist_items(playlist_id)
+                token = get_spotify_token()
+                data = get_playlist_tracks(token, playlist_id)
+                if "error" in data:
+                    st.error(f"Spotify error: {data['error']['message']}")
+                    st.stop()
                 tracks = [f"{i['track']['name']} {i['track']['artists'][0]['name']}" 
-                          for i in results['items'] if i['track']]
+                          for i in data['items'] if i['track']]
                 
                 final_results = []
                 table_placeholder = st.empty()
