@@ -89,9 +89,8 @@ if st.button("Convert to YouTube", use_container_width=True):
                 
                 playlist_id = url.split("playlist/")[1].split("?")[0]
                 results = sp.playlist_items(playlist_id)
-                st.write(results['items'])
-                tracks = [f"{i['track']['name']} {i['track']['artists'][0]['name']}" 
-                          for i in results['items'] if i.get('track') and i['track'].get('name')]
+                tracks = [f"{i['item']['name']} {i['item']['artists'][0]['name']}" 
+                          for i in results['items'] if i.get('item') and i['item'].get('name')]
                 
                 final_results = []
                 table_placeholder = st.empty()
